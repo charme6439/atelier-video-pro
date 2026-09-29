@@ -1322,11 +1322,14 @@ async function apiFetch(url, options = {}, label = 'API') {
 }
 
 async function createVideoTask(prompt, imageDataUri) {
+    const seconds = String(Math.round(state.durationFrames / 24));
     const body = {
         model: MODEL_VIDEO,
         prompt: prompt,
-        num_frames: state.durationFrames,
-        frame_rate: 24
+        seconds: seconds,
+        mode: imageDataUri ? 'image' : 'text',
+        size: '720P',
+        aspect_ratio: state.format
     };
     if (imageDataUri) body.image = imageDataUri;
 
