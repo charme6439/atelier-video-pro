@@ -1283,42 +1283,87 @@ function buildVideoPrompt(basePrompt, hasImage) {
 // API
 // ══════════════════════════════════════════════════════════════════
 async function apiFetch(url, options = {}, label = 'API') {
-    for (let attempt = 0; attempt < 7; attempt++) {
+    const MAX_ATTEMPTS = 15;
+    const BASE_WAIT = 5;  // secondes
+
+    for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
         if (state.stopRequested) throw new Error('Arrêt demandé');
         try {
             const res = await fetch(url, options);
+
+            // ─── SUCCÈS ───
+            if (res.ok) {
+                if (createIntervalMs > CREATE_INTERVAL_MIN) {
+                    state.creationAttemptsSinceLastError++;
+                    if (state.creationAttemptsSinceLastError >= 3) {
+                        createIntervalMs = Math.max(createIntervalMs - 4000, CREATE_INTERVAL_MIN);
+                        state.creationAttemptsSinceLastError = 0;
+                        log('3 succès → intervalle réduit à ' + (createIntervalMs / 1000) + 's');
+                    }
+                }
+                return res;
+            }
+
+            // ─── 429 : Trop de requêtes ───
             if (res.status === 429) {
                 state.creationAttemptsSinceLastError = 0;
                 if (createIntervalMs < CREATE_INTERVAL_SAFE) {
                     createIntervalMs = Math.min(createIntervalMs + 8000, CREATE_INTERVAL_MAX);
+                    log('429 → intervalle porté à ' + (createIntervalMs / 1000) + 's');
                 }
-                const wait = [15, 30, 45, 60, 90, 120, 180][Math.min(attempt, 6)];
-                setStatus('L\'IA se prépare… (' + wait + 's)');
+                const wait = Math.min(BASE_WAIT * Math.pow(2, attempt), 180);
+                setStatus('⏳ ' + label + ' : trop de requêtes — nouvelle tentative dans ' + wait + 's (essai ' + (attempt + 1) + '/' + MAX_ATTEMPTS + ')');
                 await sleep(wait * 1000);
                 continue;
             }
+
+            // ─── 503 : Service indisponible ou file pleine ───
             if (res.status === 503) {
-                const wait = [5, 10, 15, 20, 30, 45][Math.min(attempt, 5)];
-                setStatus('Votre vidéo se prépare… (' + wait + 's)');
+                let queueFull = false;
+                let wait = Math.min(BASE_WAIT * Math.pow(2, attempt), 120);
+                try {
+                    const clone = res.clone();
+                    const data = await clone.json();
+                    if (data.code === 'video_queue_full' || data.code === 'image_queue_full') {
+                        queueFull = true;
+                        wait = Math.min(30 + attempt * 30, 300);
+                        log('File ' + (label.includes('vidéo') ? 'vidéo' : 'image') + ' pleine → attente ' + wait + 's');
+                    }
+                } catch (e) { /* pas de JSON */ }
+
+                setStatus('⏳ ' + (queueFull ? 'File d\'attente pleine' : 'Service en préparation') + ' — nouvelle tentative dans ' + wait + 's (essai ' + (attempt + 1) + '/' + MAX_ATTEMPTS + ')');
                 await sleep(wait * 1000);
                 continue;
             }
-            if (res.ok && createIntervalMs > CREATE_INTERVAL_MIN) {
-                state.creationAttemptsSinceLastError++;
-                if (state.creationAttemptsSinceLastError >= 3) {
-                    createIntervalMs = Math.max(createIntervalMs - 4000, CREATE_INTERVAL_MIN);
-                    state.creationAttemptsSinceLastError = 0;
-                }
+
+            // ─── 500, 502, 504 : Erreurs serveur transitoires ───
+            if ([500, 502, 504].includes(res.status)) {
+                const wait = Math.min(BASE_WAIT * Math.pow(2, attempt), 90);
+                setStatus('⏳ Erreur serveur (' + res.status + ') — nouvelle tentative dans ' + wait + 's (essai ' + (attempt + 1) + '/' + MAX_ATTEMPTS + ')');
+                log('HTTP ' + res.status + ' → retry dans ' + wait + 's');
+                await sleep(wait * 1000);
+                continue;
             }
+
+            // ─── 401, 403, 404 : erreurs définitives, on arrête ───
+            if ([401, 403, 404].includes(res.status)) {
+                log('Erreur définitive HTTP ' + res.status + ' — arrêt des tentatives');
+                return res;
+            }
+
+            // ─── Autres codes : on renvoie la réponse telle quelle ───
             return res;
+
         } catch (e) {
             if (e.message === 'Arrêt demandé') throw e;
-            const wait = [3, 5, 8, 12, 20, 30][Math.min(attempt, 5)];
-            setStatus('Connexion en cours… (' + wait + 's)');
+            const wait = Math.min(BASE_WAIT * Math.pow(2, attempt), 60);
+            setStatus('🌐 Connexion instable — nouvelle tentative dans ' + wait + 's (essai ' + (attempt + 1) + '/' + MAX_ATTEMPTS + ')');
+            log('Erreur réseau → retry dans ' + wait + 's');
             await sleep(wait * 1000);
         }
     }
-    return fetch(url, options);
+
+    throw new Error('Nombre maximum de tentatives atteint (' + MAX_ATTEMPTS + ')');
 }
 
 async function createVideoTask(prompt, imageDataUri) {
