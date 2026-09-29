@@ -659,8 +659,8 @@ Exemple (texte) : « Un astronaute flotte dans l'espace au-dessus d'une planète
 // CONFIG
 // ══════════════════════════════════════════════════════════════════
 const API_BASE = 'https://apihub.agnes-ai.com/v1';
-const POLL_BASE = 'https://apihub.agnes-ai.com/v1/videos';
-const MODEL_VIDEO = 'agnes-video-2.5';
+const POLL_BASE = 'https://apihub.agnes-ai.com/agnesapi';
+const MODEL_VIDEO = 'agnes-video-2.5-flash';
 
 let createIntervalMs = 62000;
 const CREATE_INTERVAL_MIN = 62000;
@@ -1373,7 +1373,7 @@ async function pollVideo(videoId, onProgress) {
                 r--;
             }
         }
-        const url = POLL_BASE + '/' + encodeURIComponent(videoId) + '?model_name=' + encodeURIComponent(MODEL_VIDEO);
+        const url = POLL_BASE + '?video_id=' + encodeURIComponent(videoId) + '&model_name=' + encodeURIComponent(MODEL_VIDEO);
         const res = await apiFetch(url, {
             method: 'GET',
             headers: { 'Authorization': 'Bearer ' + getApiKey() }
